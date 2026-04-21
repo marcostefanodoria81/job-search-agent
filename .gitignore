@@ -1,0 +1,19 @@
+# Secrets — mai committare
+.env
+.env.local
+.env.production
+
+# Risultati scraping — dati personali/operativi, non pubblici
+results/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
