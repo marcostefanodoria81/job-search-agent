@@ -111,11 +111,12 @@ def print_summary(results: list[dict]) -> None:
         print(f"\n{scartate} offerte scartate (score <55 o criterio eliminatorio).")
 
 
-def main(dry_run: bool = False) -> None:
+def main(dry_run: bool = False, with_linkedin: bool = False) -> None:
     print("Job Search Agent — avvio\n")
 
-    print("1/3 — Recupero offerte da tutte le fonti (Himalayas, Remotive, RemoteOK, WWR)...")
-    jobs = fetch_jobs()
+    fonti = "Himalayas, Remotive, RemoteOK, WWR" + (", LinkedIn" if with_linkedin else "")
+    print(f"1/3 — Recupero offerte da tutte le fonti ({fonti})...")
+    jobs = fetch_jobs(with_linkedin=with_linkedin)
     print(f"     Trovate {len(jobs)} offerte uniche\n")
 
     print("2/3 — Scoring offerte...")
@@ -144,5 +145,10 @@ if __name__ == "__main__":
         action="store_true",
         help="Esegue scoring senza scrivere file né modificare il tracker",
     )
+    parser.add_argument(
+        "--with-linkedin",
+        action="store_true",
+        help="Include LinkedIn via Apify (consuma crediti — usare nel task automatizzato)",
+    )
     args = parser.parse_args()
-    main(dry_run=args.dry_run)
+    main(dry_run=args.dry_run, with_linkedin=args.with_linkedin)

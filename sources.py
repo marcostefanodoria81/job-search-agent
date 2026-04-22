@@ -14,8 +14,12 @@ from __future__ import annotations
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).parent / ".env")
 
 # ---------------------------------------------------------------------------
 # Himalayas
@@ -92,11 +96,11 @@ REMOTIVE_CATEGORIES = ["marketing", "copywriting"]
 
 
 def _normalize_remotive(job: dict) -> dict:
-    location = job.get("candidate_required_location", "")
+    location = job.get("candidate_required_location") or ""
     return {
-        "title": job.get("title", ""),
-        "companyName": job.get("company_name", ""),
-        "description": job.get("description", ""),
+        "title": job.get("title") or "",
+        "companyName": job.get("company_name") or "",
+        "description": job.get("description") or "",
         "excerpt": "",
         "minSalary": None,
         "maxSalary": None,
@@ -142,9 +146,9 @@ REMOTE_OK_TAGS = ["content", "marketing", "editorial"]
 
 def _normalize_remote_ok(job: dict) -> dict:
     return {
-        "title": job.get("position", ""),
-        "companyName": job.get("company", ""),
-        "description": job.get("description", ""),
+        "title": job.get("position") or "",
+        "companyName": job.get("company") or "",
+        "description": job.get("description") or "",
         "excerpt": "",
         "minSalary": job.get("salary_min"),
         "maxSalary": job.get("salary_max"),
@@ -253,10 +257,84 @@ def _fetch_wwr(seen_guids: set) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# LinkedIn via Apify
+# ---------------------------------------------------------------------------
+
+APIFY_ACTOR = "curious_coder~linkedin-jobs-scraper"
+APIFY_BASE = "https://api.apify.com/v2"
+
+# Subset di query — LinkedIn è più lento e costa crediti, usiamo le keyword più mirate
+LINKEDIN_QUERIES = [
+    "editorial manager",
+    "head of content",
+    "content operations manager",
+    "affiliate program manager",
+    "content marketing manager",
+    "newsletter manager",
+]
+
+
+def _normalize_linkedin(job: dict) -> dict:
+    return {
+        "title": job.get("title") or "",
+        "companyName": job.get("companyName") or job.get("company") or "",
+        "description": job.get("descriptionText") or job.get("description") or "",
+        "excerpt": "",
+        "minSalary": None,
+        "maxSalary": None,
+        "currency": "USD",
+        "locationRestrictions": [job["location"]] if job.get("location") else [],
+        "applicationLink": job.get("applyUrl", "") or job.get("jobUrl", ""),
+        "pubDate": job.get("postedAt", "") or job.get("publishedAt", ""),
+        "guid": f"linkedin-{job.get('id', job.get('trackingId', ''))}",
+        "expiryDate": None,
+        "_source": "linkedin",
+    }
+
+
+def _fetch_linkedin(seen_guids: set) -> list[dict]:
+    import os
+    api_key = os.environ.get("APIFY_API_KEY")
+
+    if not api_key:
+        print("    [LinkedIn] APIFY_API_KEY non trovata — salto.")
+        return []
+
+    jobs = []
+    for keyword in LINKEDIN_QUERIES:
+        try:
+            resp = requests.post(
+                f"{APIFY_BASE}/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "searchKeywords": keyword,
+                    "location": "Worldwide",
+                    "count": 25,
+                    "contractType": "fulltime",
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            active = 0
+            for job in resp.json():
+                guid = f"linkedin-{job.get('id', job.get('trackingId', ''))}"
+                if guid and guid not in seen_guids:
+                    seen_guids.add(guid)
+                    jobs.append(_normalize_linkedin(job))
+                    active += 1
+            print(f"    [LinkedIn/{keyword}] → {active} nuove")
+        except requests.RequestException as e:
+            print(f"    ERRORE LinkedIn '{keyword}': {e}")
+        time.sleep(2)
+
+    return jobs
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
-def fetch_jobs() -> list[dict]:
+def fetch_jobs(with_linkedin: bool = False) -> list[dict]:
     seen_guids: set = set()
     jobs = []
 
@@ -271,5 +349,11 @@ def fetch_jobs() -> list[dict]:
 
     print("  → We Work Remotely")
     jobs += _fetch_wwr(seen_guids)
+
+    if with_linkedin:
+        print("  → LinkedIn (Apify)")
+        jobs += _fetch_linkedin(seen_guids)
+    else:
+        print("  → LinkedIn (Apify) — saltato (usa --with-linkedin per includerlo)")
 
     return jobs
