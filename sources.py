@@ -1,14 +1,27 @@
 """
-Recupera offerte di lavoro da Himalayas API (gratuita, no auth).
-Esegue query multiple con keyword diverse e deduplica per guid.
+Recupera offerte di lavoro da più fonti gratuite e le normalizza
+in un formato comune compatibile con lo scorer.
+
+Fonti attive:
+  - Himalayas  (JSON API, no auth)
+  - Remotive   (JSON API, no auth)
+  - Remote OK  (JSON API, no auth)
+  - We Work Remotely (RSS, no auth)
 """
 
+from __future__ import annotations
+
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 
 import requests
 
-BASE_URL = "https://himalayas.app/jobs/api/search"
+# ---------------------------------------------------------------------------
+# Himalayas
+# ---------------------------------------------------------------------------
+
+HIMALAYAS_BASE = "https://himalayas.app/jobs/api/search"
 
 # Keyword sets — adattale ai ruoli target del tuo profilo
 QUERIES = [
@@ -34,46 +47,229 @@ QUERIES = [
     "brand content manager",
 ]
 
+
 def _is_active(job: dict) -> bool:
     """Scarta offerte scadute controllando expiryDate (Unix timestamp)."""
     expiry = job.get("expiryDate")
     if not expiry:
-        return True  # se non c'è data di scadenza, assumiamo valida
+        return True
     try:
         expiry_dt = datetime.fromtimestamp(int(expiry), tz=timezone.utc)
         return expiry_dt > datetime.now(tz=timezone.utc)
     except (ValueError, OSError):
-        return True  # in caso di timestamp malformato, non scartare
+        return True
 
 
-def fetch_jobs() -> list[dict]:
-    seen_guids = set()
+def _fetch_himalayas(seen_guids: set) -> list[dict]:
     jobs = []
-
     for keyword in QUERIES:
-        params = {
-            "q": keyword,
-            "employment_type": "Full Time",
-            "sort": "recent",
-        }
+        params = {"q": keyword, "employment_type": "Full Time", "sort": "recent"}
         try:
-            resp = requests.get(BASE_URL, params=params, timeout=15)
+            resp = requests.get(HIMALAYAS_BASE, params=params, timeout=15)
             resp.raise_for_status()
             data = resp.json()
-
             active = 0
             for job in data.get("jobs", []):
                 guid = job.get("guid")
                 if guid and guid not in seen_guids and _is_active(job):
                     seen_guids.add(guid)
+                    job["_source"] = "himalayas"
                     jobs.append(job)
                     active += 1
-
-            print(f"  [{keyword}] → {active} attive su {len(data.get('jobs', []))} trovate")
-
+            print(f"    [{keyword}] → {active} nuove")
         except requests.RequestException as e:
-            print(f"  ERRORE per '{keyword}': {e}")
-
+            print(f"    ERRORE Himalayas '{keyword}': {e}")
         time.sleep(0.5)
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# Remotive
+# ---------------------------------------------------------------------------
+
+REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
+REMOTIVE_CATEGORIES = ["marketing", "copywriting"]
+
+
+def _normalize_remotive(job: dict) -> dict:
+    location = job.get("candidate_required_location", "")
+    return {
+        "title": job.get("title", ""),
+        "companyName": job.get("company_name", ""),
+        "description": job.get("description", ""),
+        "excerpt": "",
+        "minSalary": None,
+        "maxSalary": None,
+        "currency": "USD",
+        "locationRestrictions": [location] if location else [],
+        "applicationLink": job.get("url", ""),
+        "pubDate": job.get("publication_date", ""),
+        "guid": f"remotive-{job.get('id', '')}",
+        "expiryDate": None,
+        "_source": "remotive",
+    }
+
+
+def _fetch_remotive(seen_guids: set) -> list[dict]:
+    jobs = []
+    for category in REMOTIVE_CATEGORIES:
+        try:
+            resp = requests.get(
+                REMOTIVE_URL, params={"category": category, "limit": 100}, timeout=15
+            )
+            resp.raise_for_status()
+            active = 0
+            for job in resp.json().get("jobs", []):
+                guid = f"remotive-{job.get('id', '')}"
+                if guid not in seen_guids:
+                    seen_guids.add(guid)
+                    jobs.append(_normalize_remotive(job))
+                    active += 1
+            print(f"    [Remotive/{category}] → {active} nuove")
+        except requests.RequestException as e:
+            print(f"    ERRORE Remotive '{category}': {e}")
+        time.sleep(0.5)
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# Remote OK
+# ---------------------------------------------------------------------------
+
+REMOTE_OK_URL = "https://remoteok.com/api"
+REMOTE_OK_TAGS = ["content", "marketing", "editorial"]
+
+
+def _normalize_remote_ok(job: dict) -> dict:
+    return {
+        "title": job.get("position", ""),
+        "companyName": job.get("company", ""),
+        "description": job.get("description", ""),
+        "excerpt": "",
+        "minSalary": job.get("salary_min"),
+        "maxSalary": job.get("salary_max"),
+        "currency": "USD",
+        "locationRestrictions": [],
+        "applicationLink": job.get("apply_url") or job.get("url", ""),
+        "pubDate": job.get("date", ""),
+        "guid": f"remoteok-{job.get('id', job.get('slug', ''))}",
+        "expiryDate": None,
+        "_source": "remoteok",
+    }
+
+
+def _fetch_remote_ok(seen_guids: set) -> list[dict]:
+    jobs = []
+    for tag in REMOTE_OK_TAGS:
+        try:
+            resp = requests.get(
+                REMOTE_OK_URL,
+                params={"tags": tag},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            # Il primo elemento dell'array è metadata, lo saltiamo
+            items = [j for j in resp.json() if isinstance(j, dict) and "position" in j]
+            active = 0
+            for job in items:
+                guid = f"remoteok-{job.get('id', job.get('slug', ''))}"
+                if guid not in seen_guids:
+                    seen_guids.add(guid)
+                    jobs.append(_normalize_remote_ok(job))
+                    active += 1
+            print(f"    [RemoteOK/{tag}] → {active} nuove")
+        except requests.RequestException as e:
+            print(f"    ERRORE RemoteOK '{tag}': {e}")
+        time.sleep(1)  # RemoteOK è più sensibile al rate limiting
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# We Work Remotely
+# ---------------------------------------------------------------------------
+
+WWR_RSS_URLS = [
+    "https://weworkremotely.com/categories/remote-marketing-jobs.rss",
+]
+
+
+def _normalize_wwr(item: ET.Element) -> dict | None:
+    title_el = item.find("title")
+    link_el = item.find("link")
+    desc_el = item.find("description")
+    pub_el = item.find("pubDate")
+    guid_el = item.find("guid")
+
+    if title_el is None or not title_el.text:
+        return None
+
+    raw_title = title_el.text.strip()
+    # Formato WWR: "Company Name: Job Title"
+    if ": " in raw_title:
+        company, title = raw_title.split(": ", 1)
+    else:
+        company, title = "N/D", raw_title
+
+    link = link_el.text.strip() if link_el is not None and link_el.text else ""
+    guid_text = guid_el.text.strip() if guid_el is not None and guid_el.text else link
+
+    return {
+        "title": title.strip(),
+        "companyName": company.strip(),
+        "description": desc_el.text or "" if desc_el is not None else "",
+        "excerpt": "",
+        "minSalary": None,
+        "maxSalary": None,
+        "currency": "USD",
+        "locationRestrictions": [],
+        "applicationLink": link,
+        "pubDate": pub_el.text or "" if pub_el is not None else "",
+        "guid": f"wwr-{guid_text}",
+        "expiryDate": None,
+        "_source": "weworkremotely",
+    }
+
+
+def _fetch_wwr(seen_guids: set) -> list[dict]:
+    jobs = []
+    for url in WWR_RSS_URLS:
+        try:
+            resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+            active = 0
+            for item in root.findall(".//item"):
+                job = _normalize_wwr(item)
+                if job and job["guid"] not in seen_guids:
+                    seen_guids.add(job["guid"])
+                    jobs.append(job)
+                    active += 1
+            print(f"    [WeWorkRemotely] → {active} nuove")
+        except (requests.RequestException, ET.ParseError) as e:
+            print(f"    ERRORE WWR: {e}")
+        time.sleep(0.5)
+    return jobs
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def fetch_jobs() -> list[dict]:
+    seen_guids: set = set()
+    jobs = []
+
+    print("  → Himalayas")
+    jobs += _fetch_himalayas(seen_guids)
+
+    print("  → Remotive")
+    jobs += _fetch_remotive(seen_guids)
+
+    print("  → Remote OK")
+    jobs += _fetch_remote_ok(seen_guids)
+
+    print("  → We Work Remotely")
+    jobs += _fetch_wwr(seen_guids)
 
     return jobs

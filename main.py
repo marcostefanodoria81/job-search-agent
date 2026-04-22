@@ -114,7 +114,7 @@ def print_summary(results: list[dict]) -> None:
 def main(dry_run: bool = False) -> None:
     print("Job Search Agent — avvio\n")
 
-    print("1/3 — Recupero offerte da Himalayas...")
+    print("1/3 — Recupero offerte da tutte le fonti (Himalayas, Remotive, RemoteOK, WWR)...")
     jobs = fetch_jobs()
     print(f"     Trovate {len(jobs)} offerte uniche\n")
 
