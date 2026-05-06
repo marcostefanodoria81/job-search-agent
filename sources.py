@@ -415,6 +415,12 @@ def _fetch_linkedin(seen_guids: set) -> list[dict]:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _dedup_key(job: dict) -> str:
+    title = (job.get("title") or "").lower().strip()
+    company = (job.get("companyName") or "").lower().strip()
+    return f"{title}|{company}"
+
+
 def fetch_jobs(with_linkedin: bool = False) -> list[dict]:
     seen_guids: set = set()
     jobs = []
@@ -443,4 +449,14 @@ def fetch_jobs(with_linkedin: bool = False) -> list[dict]:
     else:
         print("  → LinkedIn (Apify) — saltato (usa --with-linkedin per includerlo)")
 
-    return jobs
+    seen_pairs: set = set()
+    unique: list[dict] = []
+    for job in jobs:
+        key = _dedup_key(job)
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            unique.append(job)
+    duplicates = len(jobs) - len(unique)
+    if duplicates:
+        print(f"  → Removed {duplicates} cross-source duplicates")
+    return unique
