@@ -49,6 +49,15 @@ QUERIES = [
     "newsletter manager",
     "b2b content strategist",
     "brand content manager",
+    # SEO & Organic Growth
+    "seo manager",
+    "head of seo",
+    "seo lead",
+    # AI Content & Automation
+    "ai content manager",
+    "head of ai content",
+    "content automation manager",
+    "ai content strategist",
 ]
 
 
@@ -257,6 +266,77 @@ def _fetch_wwr(seen_guids: set) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Jobicy
+# ---------------------------------------------------------------------------
+
+JOBICY_BASE = "https://jobicy.com/feed/job_feed"
+JOBICY_CATEGORIES = ["marketing", "copywriting"]
+
+
+def _normalize_jobicy(item) -> dict | None:
+    import xml.etree.ElementTree as _ET
+    title_el = item.find("title")
+    link_el = item.find("link")
+    desc_el = item.find("description")
+    pub_el = item.find("pubDate")
+    guid_el = item.find("guid")
+
+    if title_el is None or not title_el.text:
+        return None
+
+    raw_title = title_el.text.strip()
+    if ": " in raw_title:
+        company, title = raw_title.split(": ", 1)
+    else:
+        company, title = "N/D", raw_title
+
+    link = link_el.text.strip() if link_el is not None and link_el.text else ""
+    guid_text = guid_el.text.strip() if guid_el is not None and guid_el.text else link
+
+    return {
+        "title": title.strip(),
+        "companyName": company.strip(),
+        "description": desc_el.text or "" if desc_el is not None else "",
+        "excerpt": "",
+        "minSalary": None,
+        "maxSalary": None,
+        "currency": "USD",
+        "locationRestrictions": [],
+        "applicationLink": link,
+        "pubDate": pub_el.text or "" if pub_el is not None else "",
+        "guid": f"jobicy-{guid_text}",
+        "expiryDate": None,
+        "_source": "jobicy",
+    }
+
+
+def _fetch_jobicy(seen_guids: set, region: str | None = None) -> list[dict]:
+    jobs = []
+    label_prefix = f"Jobicy-{region.upper()}" if region else "Jobicy"
+    for category in JOBICY_CATEGORIES:
+        params = f"job_categories={category}&job_types=full-time"
+        if region:
+            params += f"&search_region={region}"
+        url = f"{JOBICY_BASE}?{params}"
+        try:
+            resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+            active = 0
+            for item in root.findall(".//item"):
+                job = _normalize_jobicy(item)
+                if job and job["guid"] not in seen_guids:
+                    seen_guids.add(job["guid"])
+                    jobs.append(job)
+                    active += 1
+            print(f"    [{label_prefix}/{category}] → {active} nuove")
+        except (requests.RequestException, ET.ParseError) as e:
+            print(f"    ERRORE {label_prefix} '{category}': {e}")
+        time.sleep(0.5)
+    return jobs
+
+
+# ---------------------------------------------------------------------------
 # LinkedIn via Apify
 # ---------------------------------------------------------------------------
 
@@ -292,6 +372,12 @@ def _normalize_linkedin(job: dict) -> dict:
     }
 
 
+def _build_linkedin_url(keyword: str) -> str:
+    from urllib.parse import urlencode
+    params = urlencode({"keywords": keyword, "f_JT": "F", "f_WT": "2", "position": "1", "pageNum": "0"})
+    return f"https://www.linkedin.com/jobs/search/?{params}"
+
+
 def _fetch_linkedin(seen_guids: set) -> list[dict]:
     import os
     api_key = os.environ.get("APIFY_API_KEY")
@@ -306,12 +392,7 @@ def _fetch_linkedin(seen_guids: set) -> list[dict]:
             resp = requests.post(
                 f"{APIFY_BASE}/acts/{APIFY_ACTOR}/run-sync-get-dataset-items",
                 headers={"Authorization": f"Bearer {api_key}"},
-                json={
-                    "searchKeywords": keyword,
-                    "location": "Worldwide",
-                    "count": 25,
-                    "contractType": "fulltime",
-                },
+                json={"urls": [_build_linkedin_url(keyword)], "count": 25},
                 timeout=120,
             )
             resp.raise_for_status()
@@ -349,6 +430,12 @@ def fetch_jobs(with_linkedin: bool = False) -> list[dict]:
 
     print("  → We Work Remotely")
     jobs += _fetch_wwr(seen_guids)
+
+    print("  → Jobicy")
+    jobs += _fetch_jobicy(seen_guids)
+
+    print("  → Jobicy EMEA")
+    jobs += _fetch_jobicy(seen_guids, region="emea")
 
     if with_linkedin:
         print("  → LinkedIn (Apify)")

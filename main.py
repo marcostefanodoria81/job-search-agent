@@ -1,10 +1,10 @@
 """
 Job Search Agent — Marco Doria
-Recupera offerte da Himalayas API, le valuta con uno scorer rule-based, salva i risultati.
+Fetches listings from multiple sources, scores them with a rule-based scorer, saves results.
 
-Uso:
-  python main.py           → ricerca completa + salva JSON + aggiorna tracker
-  python main.py --dry-run → solo ricerca e scoring, non salva nulla
+Usage:
+  python main.py           → full run: score jobs + save JSON + update tracker
+  python main.py --dry-run → score and print only, no files written
 """
 
 import argparse
@@ -19,15 +19,15 @@ from scorer import score_job
 RESULTS_DIR = Path(__file__).parent / "results"
 TRACKER_PATH = Path(__file__).parent.parent / "opportunities" / "tracker.md"
 
-LEVEL_PRIORITY = {"Alta": 0, "Media": 1, "Bassa": 2}
+LEVEL_PRIORITY = {"High": 0, "Medium": 1, "Low": 2}
 
 
 def priority_label(score: int) -> str:
     if score >= 88:
-        return "Alta"
+        return "High"
     if score >= 72:
-        return "Media"
-    return "Bassa"
+        return "Medium"
+    return "Low"
 
 
 def save_results(results: list[dict]) -> Path:
@@ -36,19 +36,19 @@ def save_results(results: list[dict]) -> Path:
     try:
         output_path.write_text(json.dumps(results, indent=2, ensure_ascii=False))
     except OSError as e:
-        print(f"ATTENZIONE: impossibile salvare il JSON ({e}). Continuo comunque.")
+        print(f"WARNING: could not save JSON ({e}). Continuing anyway.")
         return output_path
     return output_path
 
 
 def update_tracker(matches: list[dict]) -> None:
-    """Aggiunge le offerte con score ≥55 alla sezione Pipeline del tracker."""
+    """Appends listings with score ≥55 to the Pipeline section of the tracker."""
     if not matches:
-        print("Nessun match da aggiungere al tracker.")
+        print("No matches to add to tracker.")
         return
 
     if not TRACKER_PATH.exists():
-        print(f"ATTENZIONE: tracker non trovato in {TRACKER_PATH}. Usa --dry-run o crea il file.")
+        print(f"WARNING: tracker not found at {TRACKER_PATH}. Use --dry-run or create the file.")
         return
 
     tracker = TRACKER_PATH.read_text()
@@ -56,7 +56,7 @@ def update_tracker(matches: list[dict]) -> None:
     rows = []
     for r in matches:
         strengths_text = r["strengths"][0] if r["strengths"] else "—"
-        gaps_text = r["gaps"][0] if r["gaps"] else "nessuno"
+        gaps_text = r["gaps"][0] if r["gaps"] else "none"
         row = (
             f"| {r['company']} "
             f"| {r['title']} "
@@ -64,12 +64,12 @@ def update_tracker(matches: list[dict]) -> None:
             f"| {r['location']} "
             f"| Score {r['score']}/110 — {r['level']} "
             f"| {priority_label(r['score'])} "
-            f"| {strengths_text}. Gap: {gaps_text}. [Apri]({r['link']}) |"
+            f"| {strengths_text}. Gaps: {gaps_text}. [Open]({r['link']}) |"
         )
         rows.append(row)
 
-    marker = "| Azienda | Ruolo | Range stimato | Location | Status | Priorità | Note |"
-    separator = "|---------|-------|---------------|----------|--------|----------|------|"
+    marker = "| Company | Role | Salary | Location | Status | Priority | Notes |"
+    separator = "|---------|------|--------|----------|--------|----------|-------|"
 
     if marker in tracker and separator in tracker:
         insert_after = f"{marker}\n{separator}"
@@ -80,9 +80,9 @@ def update_tracker(matches: list[dict]) -> None:
             1,
         )
         TRACKER_PATH.write_text(updated)
-        print(f"Tracker aggiornato: {len(rows)} offerte aggiunte.")
+        print(f"Tracker updated: {len(rows)} listings added.")
     else:
-        print("ATTENZIONE: struttura tracker non trovata. Aggiornamento manuale necessario.")
+        print("WARNING: tracker structure not found. Manual update required.")
 
 
 def print_summary(results: list[dict]) -> None:
@@ -90,15 +90,15 @@ def print_summary(results: list[dict]) -> None:
     matches.sort(key=lambda x: x["score"], reverse=True)
 
     print(f"\n{'='*60}")
-    print(f"RISULTATI: {len(matches)} match su {len(results)} offerte analizzate")
+    print(f"RESULTS: {len(matches)} matches out of {len(results)} listings scored")
     print(f"{'='*60}")
 
     for r in matches:
         bar = "█" * (r["score"] // 10) + "░" * (11 - r["score"] // 10)
         print(f"\n[{r['score']:>3}/110] {bar} {r['level'].upper()}")
         print(f"  {r['title']} @ {r['company']}")
-        print(f"  Salario: {r['salary']} | Location: {r['location']}")
-        print(f"  Azione: {r['action']}")
+        print(f"  Salary: {r['salary']} | Location: {r['location']}")
+        print(f"  Action: {r['action']}")
         if r["strengths"]:
             print(f"  + {r['strengths'][0]}")
         if r["gaps"]:
@@ -106,20 +106,20 @@ def print_summary(results: list[dict]) -> None:
         if r["link"]:
             print(f"  Link: {r['link']}")
 
-    scartate = len(results) - len(matches)
-    if scartate:
-        print(f"\n{scartate} offerte scartate (score <55 o criterio eliminatorio).")
+    discarded = len(results) - len(matches)
+    if discarded:
+        print(f"\n{discarded} listings discarded (score <55 or eliminatory filter).")
 
 
 def main(dry_run: bool = False, with_linkedin: bool = False) -> None:
-    print("Job Search Agent — avvio\n")
+    print("Job Search Agent — starting\n")
 
-    fonti = "Himalayas, Remotive, RemoteOK, WWR" + (", LinkedIn" if with_linkedin else "")
-    print(f"1/3 — Recupero offerte da tutte le fonti ({fonti})...")
+    sources = "Himalayas, Remotive, RemoteOK, WWR" + (", LinkedIn" if with_linkedin else "")
+    print(f"1/3 — Fetching listings from all sources ({sources})...")
     jobs = fetch_jobs(with_linkedin=with_linkedin)
-    print(f"     Trovate {len(jobs)} offerte uniche\n")
+    print(f"     {len(jobs)} unique listings found\n")
 
-    print("2/3 — Scoring offerte...")
+    print("2/3 — Scoring listings...")
     results = []
     for i, job in enumerate(jobs, 1):
         print(f"     [{i:>2}/{len(jobs)}] {job.get('title', '?')} @ {job.get('companyName', '?')}")
@@ -129,13 +129,13 @@ def main(dry_run: bool = False, with_linkedin: bool = False) -> None:
     print_summary(results)
 
     if not dry_run:
-        print(f"\n3/3 — Salvo risultati...")
+        print(f"\n3/3 — Saving results...")
         output_path = save_results(results)
-        print(f"     JSON salvato: {output_path}")
+        print(f"     JSON saved: {output_path}")
         matches = [r for r in results if r["score"] >= 55 and not r.get("eliminated_by")]
         update_tracker(matches)
     else:
-        print("\n[dry-run] Nessun file scritto, tracker non modificato.")
+        print("\n[dry-run] No files written, tracker not modified.")
 
 
 if __name__ == "__main__":
@@ -143,12 +143,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Esegue scoring senza scrivere file né modificare il tracker",
+        help="Score and print only, no files written and tracker not modified",
     )
     parser.add_argument(
         "--with-linkedin",
         action="store_true",
-        help="Include LinkedIn via Apify (consuma crediti — usare nel task automatizzato)",
+        help="Include LinkedIn via Apify (uses API credits — intended for scheduled runs)",
     )
     args = parser.parse_args()
     main(dry_run=args.dry_run, with_linkedin=args.with_linkedin)

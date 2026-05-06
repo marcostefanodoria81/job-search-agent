@@ -166,13 +166,13 @@ def _salary_eur(job: dict) -> float | None:
 
 def _is_location_compatible(job: dict) -> tuple[bool, str]:
     """
-    Restituisce (compatibile, motivo).
-    Logica conservativa: se ci sono restrizioni geografiche e nessuna
-    indica compatibilità con l'Italia/EU, il ruolo è eliminatorio.
+    Returns (compatible, reason).
+    Conservative logic: if there are geo restrictions and none signal
+    Italy/EU compatibility, the role is eliminatory.
 
-    - Nessuna restrizione → worldwide → ok
-    - Almeno una restrizione compatibile (Europe, worldwide, Italy, ecc.) → ok
-    - Solo restrizioni non-EU/non-worldwide → eliminatorio
+    - No restrictions → worldwide → ok
+    - At least one compatible signal (Europe, worldwide, Italy, etc.) → ok
+    - Only non-EU/non-worldwide restrictions → eliminatory
     """
     restrictions = [loc.lower() for loc in job.get("locationRestrictions", [])]
 
@@ -185,22 +185,22 @@ def _is_location_compatible(job: dict) -> tuple[bool, str]:
             if compatible in loc:
                 return True, ""
 
-    # Nessun segnale positivo → incompatibile (logica conservativa)
-    return False, f"location non compatibile con Italia/EU: {', '.join(restrictions[:3])}"
+    # No positive signal → incompatible (conservative logic)
+    return False, f"location not compatible with Italy/EU: {', '.join(restrictions[:3])}"
 
 
 def _check_eliminatory(job: dict, text: str) -> str | None:
-    """Restituisce il motivo di eliminazione o None se ok."""
+    """Returns the elimination reason or None if the listing passes."""
     title_low = _title(job)
 
     if _matches(text, GAMING_KEYWORDS):
-        return "settore gaming"
+        return "gaming sector"
     if _matches(text, CRYPTO_KEYWORDS):
-        return "settore crypto/Web3"
+        return "crypto/Web3 sector"
     if _matches(title_low, ENTRY_LEVEL_KEYWORDS):
-        return "ruolo entry level / internship"
+        return "entry-level / internship role"
     if _matches(text, NOT_REMOTE_KEYWORDS):
-        return "non remote"
+        return "not remote"
 
     compatible, reason = _is_location_compatible(job)
     if not compatible:
@@ -208,7 +208,7 @@ def _check_eliminatory(job: dict, text: str) -> str | None:
 
     salary_eur = _salary_eur(job)
     if salary_eur is not None and salary_eur < 30_000:
-        return f"salario troppo basso ({salary_eur:.0f} EUR)"
+        return f"salary too low ({salary_eur:.0f} EUR)"
 
     return None
 
@@ -219,24 +219,24 @@ def _check_eliminatory(job: dict, text: str) -> str | None:
 
 def _score_role(title: str) -> tuple[int, str]:
     if _matches(title, ROLE_TIER1):
-        return 30, "editorial leadership con team ownership"
+        return 30, "editorial leadership with team ownership"
     if _matches(title, ROLE_TIER2):
-        return 22, "content manager con ownership strategica"
+        return 22, "content manager with strategic ownership"
     if _matches(title, ROLE_TIER3):
         return 18, "content marketing + SEO/performance"
     if _matches(title, ROLE_TIER4):
-        return 15, "affiliate manager con componente editoriale"
+        return 15, "affiliate manager with editorial component"
     if _matches(title, ROLE_TIER5):
-        return 12, "senior editor/writer con prospettiva crescita"
-    return 5, "ruolo non allineato alla traiettoria"
+        return 12, "senior editor/writer with growth potential"
+    return 5, "role misaligned with target trajectory"
 
 
 def _score_sector(text: str) -> tuple[int, str]:
-    # Settori a bassa priorità vanno verificati PRIMA per evitare
-    # che keyword generiche (es. "editorial") li promuovano a tier3
+    # Low-priority sectors checked first to prevent generic keywords (e.g. "editorial")
+    # from promoting them to tier3
     low_priority = _matches(text, SECTOR_TIER5)
     if low_priority and not _matches(text, SECTOR_TIER1 + SECTOR_TIER2):
-        return 6, f"settore bassa priorità: {low_priority[0]}"
+        return 6, f"low-priority sector: {low_priority[0]}"
 
     if _matches(text, SECTOR_TIER1):
         return 20, "eCommerce / affiliate"
@@ -248,20 +248,20 @@ def _score_sector(text: str) -> tuple[int, str]:
         return 10, "fintech"
     if low_priority:
         return 6, "healthcare / legal / education"
-    return 8, "settore non classificato"
+    return 8, "unclassified sector"
 
 
 def _score_salary(job: dict) -> tuple[int, str]:
     salary_eur = _salary_eur(job)
     if salary_eur is None:
-        return 10, "salario non dichiarato"
+        return 10, "salary not disclosed"
     if salary_eur >= 50_000:
-        return 20, f"salario nella fascia target ({salary_eur:.0f} EUR)"
+        return 20, f"salary in target range ({salary_eur:.0f} EUR)"
     if salary_eur >= 40_000:
-        return 14, f"salario accettabile ({salary_eur:.0f} EUR)"
+        return 14, f"salary in acceptable range ({salary_eur:.0f} EUR)"
     if salary_eur >= 30_000:
-        return 4, f"salario sotto target ({salary_eur:.0f} EUR)"
-    return 0, f"salario troppo basso ({salary_eur:.0f} EUR)"
+        return 4, f"salary below target ({salary_eur:.0f} EUR)"
+    return 0, f"salary too low ({salary_eur:.0f} EUR)"
 
 
 def _score_skills(text: str) -> tuple[int, str]:
@@ -273,9 +273,9 @@ def _score_skills(text: str) -> tuple[int, str]:
     raw = (len(strong) * 2 + len(medium)) / (required_proxy * 2)
     score = min(int(raw * 20), 20)
 
-    detail = f"{len(strong)} skill forti, {len(medium)} parziali"
+    detail = f"{len(strong)} strong skills, {len(medium)} partial matches"
     if gaps:
-        detail += f", gap: {', '.join(gaps[:2])}"
+        detail += f", gaps: {', '.join(gaps[:2])}"
     return score, detail
 
 
@@ -284,19 +284,19 @@ def _score_closability(text: str) -> tuple[int, str]:
     hard = _matches(text, HARD_GAP_KEYWORDS)
 
     if hard:
-        return 2, f"gap strutturali rilevati: {', '.join(hard[:2])}"
+        return 2, f"structural gaps detected: {', '.join(hard[:2])}"
     if closable:
-        return 10, f"gap colmabili con supporto AI: {', '.join(closable[:2])}"
-    return 6, "gap non determinabili dal testo"
+        return 10, f"closable gaps with AI support: {', '.join(closable[:2])}"
+    return 6, "gaps not determinable from text"
 
 
 def _score_growth(text: str) -> tuple[int, str]:
     hits = _matches(text, GROWTH_PATH_KEYWORDS)
     if len(hits) >= 3:
-        return 10, "forte allineamento con traiettoria affiliate PM / head of content"
+        return 10, "strong alignment with affiliate PM / head of content path"
     if len(hits) >= 1:
-        return 7, "parziale allineamento con traiettoria target"
-    return 4, "path di crescita non evidente"
+        return 7, "partial alignment with target trajectory"
+    return 4, "growth path not evident"
 
 
 # ---------------------------------------------------------------------------
@@ -312,10 +312,10 @@ def score_job(job: dict) -> dict:
     if eliminated_by:
         return {
             "score": 10,
-            "level": "Scartare",
+            "level": "Discard",
             "strengths": [],
-            "gaps": [f"Criterio eliminatorio: {eliminated_by}"],
-            "action": "Scarta",
+            "gaps": [f"Eliminatory filter: {eliminated_by}"],
+            "action": "Discard",
             "eliminated_by": eliminated_by,
             "title": job.get("title") or "N/D",
             "company": job.get("companyName") or "N/D",
@@ -336,20 +336,20 @@ def score_job(job: dict) -> dict:
     total = role_pts + sector_pts + salary_pts + skill_pts + close_pts + growth_pts
 
     if total >= 88:
-        level = "Forte"
-        action = "Candidati subito"
+        level = "Strong"
+        action = "Apply now"
     elif total >= 72:
-        level = "Buono"
-        action = "Esplora"
+        level = "Good"
+        action = "Explore"
     elif total >= 55:
-        level = "Esplorare"
-        action = "Monitora"
+        level = "Consider"
+        action = "Monitor"
     else:
-        level = "Scartare"
-        action = "Scarta"
+        level = "Discard"
+        action = "Discard"
 
     strengths = [s for s in [role_note, sector_note, salary_note] if s]
-    gaps = [g for g in [skill_note, close_note] if "gap" in g or "colmab" in g]
+    gaps = [g for g in [skill_note, close_note] if "gap" in g]
 
     return {
         "score": total,
