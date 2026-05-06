@@ -8,8 +8,8 @@ Built as a personal tool and learning project — no LLM calls, no paid APIs, ze
 
 ## What it does
 
-1. Queries Himalayas with 16 keyword sets (editorial, content marketing, affiliate, SEO, B2B content, newsletter...)
-2. Deduplicates results and filters out expired listings
+1. Queries Himalayas, Remotive, RemoteOK, We Work Remotely, and optionally LinkedIn with 20+ keyword sets (editorial, content marketing, affiliate, SEO, B2B content, AI content, newsletter...)
+2. Deduplicates results across all sources
 3. Scores each job across 6 dimensions (110 points total):
    - Role fit
    - Sector fit
@@ -42,7 +42,7 @@ RISULTATI: 18 match su 241 offerte analizzate
 
 ## Setup
 
-**Requirements:** Python 3.9+, `requests`
+**Requirements:** Python 3.9+
 
 ```bash
 # Clone the repo
@@ -53,7 +53,7 @@ cd job-search-agent
 pip install -r requirements.txt
 ```
 
-No API key required.
+No API key required for the base run. LinkedIn scraping (`--with-linkedin`) requires your own [Apify](https://apify.com) key — see `.env.example`.
 
 ---
 
@@ -62,6 +62,9 @@ No API key required.
 ```bash
 # Full run: score jobs + save JSON + update tracker
 python main.py
+
+# Include LinkedIn via Apify (requires APIFY_API_KEY in .env)
+python main.py --with-linkedin
 
 # Dry run: score and print only, no files written
 python main.py --dry-run

@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.production
+sheets_credentials.json
 
 # Risultati scraping — dati personali/operativi, non pubblici
 results/
